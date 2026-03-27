@@ -422,22 +422,22 @@ void Comb::FrameBuffer::split3D(FrameBuffer &nextFrame, int frameIdx)
                     // FIX: use all available logical cores, not a hardcoded value
                     session_options.SetIntraOpNumThreads(QThread::idealThreadCount());
 
-#ifdef USE_CUDA
+//  #ifdef USE_CUDA
                     // Attempt to enable the CUDA execution provider (GPU).
                     // ORT 1.16.3 requires CUDA 11.8 -- matches the system install.
                     // If CUDA is unavailable at runtime, falls back to CPU silently.
-                    try {
-                        OrtCUDAProviderOptions cuda_options{};
-                        cuda_options.device_id = 0;  // use first GPU
-                        session_options.AppendExecutionProvider_CUDA(cuda_options);
-                        using_cuda = true;
-                        qDebug() << "AI: CUDA execution provider registered (GPU accelerated)";
-                    } catch (const std::exception& cuda_err) {
-                        using_cuda = false;
-                        qWarning() << "AI: CUDA provider failed, falling back to CPU:"
-                                   << cuda_err.what();
-                    }
-#endif
+//                    try {
+//                        OrtCUDAProviderOptions cuda_options{};
+//                        cuda_options.device_id = 0;  // use first GPU
+//                        session_options.AppendExecutionProvider_CUDA(cuda_options);
+//                        using_cuda = true;
+//                        qDebug() << "AI: CUDA execution provider registered (GPU accelerated)";
+//                    } catch (const std::exception& cuda_err) {
+//                        using_cuda = false;
+//                        qWarning() << "AI: CUDA provider failed, falling back to CPU:"
+//                                   << cuda_err.what();
+//                    }
+//  #endif
 
                     // FIX: locate chroma_net.onnx next to the executable.
                     // Works on both Windows and Linux; no hardcoded absolute path.
@@ -455,16 +455,16 @@ void Comb::FrameBuffer::split3D(FrameBuffer &nextFrame, int frameIdx)
                         *env, modelPath.c_str(), session_options);
 
                       // Diagnostic - print actual model input/output names
-                    auto inputCount = session->GetInputCount();
-                    for (size_t i = 0; i < inputCount; i++) {
-                        auto inputName = session->GetInputNameAllocated(i, Ort::AllocatorWithDefaultOptions());
-                        qDebug() << "Model input" << i << ":" << inputName.get();
-                    }
-                    auto outputCount = session->GetOutputCount();
-                    for (size_t i = 0; i < outputCount; i++) {
-                        auto outputName = session->GetOutputNameAllocated(i, Ort::AllocatorWithDefaultOptions());
-                        qDebug() << "Model output" << i << ":" << outputName.get();
-                    }
+             //       auto inputCount = session->GetInputCount();
+               //     for (size_t i = 0; i < inputCount; i++) {
+                //        auto inputName = session->GetInputNameAllocated(i, Ort::AllocatorWithDefaultOptions());
+               //         qDebug() << "Model input" << i << ":" << inputName.get();
+             //       }
+            //        auto outputCount = session->GetOutputCount();
+            //        for (size_t i = 0; i < outputCount; i++) {
+            //            auto outputName = session->GetOutputNameAllocated(i, Ort::AllocatorWithDefaultOptions());
+            //            qDebug() << "Model output" << i << ":" << outputName.get();
+            //        }
 
                     model_loaded = true;
                     qDebug() << "AI: ONNX model loaded from" << modelPathQ
