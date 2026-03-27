@@ -111,11 +111,8 @@ void Comb::decodeFrames(const QVector<SourceField> &inputFields, qint32 startInd
     assert(configurationSet);
     assert((componentFrames.size() * 2) == (endIndex - startIndex));
 
-    // Cache to hold FrameBuffers because OLA requires adding to future frames
-    // Key: Frame Index (relative to input array)
     QMap<int, std::shared_ptr<FrameBuffer>> bufferCache;
 
-    // Helper: Get existing buffer or create new one populated with fields
     auto getFrameBuffer = [&](int frameIdx) -> std::shared_ptr<FrameBuffer> {
         if (bufferCache.contains(frameIdx)) {
             return bufferCache[frameIdx];
@@ -123,38 +120,29 @@ void Comb::decodeFrames(const QVector<SourceField> &inputFields, qint32 startInd
 
         auto buf = std::make_shared<FrameBuffer>(videoParameters, configuration);
         
-        // Calculate absolute field indices in inputFields
         int fieldIdx1 = startIndex + frameIdx * 2;
         int fieldIdx2 = fieldIdx1 + 1;
 
         if (fieldIdx1 >= 0 && fieldIdx2 < inputFields.size()) {
             buf->loadFields(inputFields[fieldIdx1], inputFields[fieldIdx2]);
-            // Pre-calculate 1D/2D for fallback
             buf->split1D();
             buf->split2D();
         } 
-        // Else: buffer remains black (boundary handling)
 
         bufferCache.insert(frameIdx, buf);
         return buf;
     };
 
-    // Step by 2 fields (1 frame)
-    // 4 Fields Block Logic: [Current, Next]
     for (qint32 fieldIndex = startIndex; fieldIndex < endIndex; fieldIndex += 2) {
         int currentFrameIdx = (fieldIndex - startIndex) / 2;
         
-        // Block = [Current, Next] (4 Fields)
         auto bufCurr = getFrameBuffer(currentFrameIdx);
         auto bufNext = getFrameBuffer(currentFrameIdx + 1);
         
         if (configuration.dimensions == 3) {
-            // Process 4-field block
-            // Result is accumulated into bufCurr AND bufNext
             bufCurr->split3D(*bufNext, currentFrameIdx);
         }
         
-        // Output Current Frame
         if (currentFrameIdx >= 0 && currentFrameIdx < componentFrames.size()) {
             auto buf = bufCurr;
             
@@ -173,7 +161,6 @@ void Comb::decodeFrames(const QVector<SourceField> &inputFields, qint32 startInd
             buf->doYNR();
             buf->transformIQ(configuration.chromaGain, configuration.chromaPhase);
 
-            // Frame is done, remove from cache
             bufferCache.remove(currentFrameIdx);
         }
     }
@@ -188,13 +175,11 @@ Comb::FrameBuffer::FrameBuffer(const LdDecodeMetaData::VideoParameters &videoPar
     frameHeight = ((videoParameters.fieldHeight * 2) - 1);
     irescale = (videoParameters.white16bIre - videoParameters.black16bIre) / 100;
 
-    // Initialize Accumulators
     int safeWidth = videoParameters.fieldWidth;
     int safeHeight = videoParameters.fieldHeight * 2;
     accChroma.resize(safeHeight, std::vector<double>(safeWidth, 0.0));
     weightSum.resize(safeHeight, std::vector<double>(safeWidth, 0.0));
 
-    // Initialize rawbuffer to black to avoid uninitialized reads
     int totalSamples = videoParameters.fieldWidth * frameHeight;
     rawbuffer.fill(0, totalSamples); 
 }
@@ -303,25 +288,20 @@ void Comb::FrameBuffer::split2D()
 #define IDX3(t, y, x, Nt, Ny, Nx) ((t)*(Ny)*(Nx) + (y)*(Nx) + (x))
 #endif
 
-// [FIX] 4-Field Split3D with STRICT Patent Logic (Symmetry & Freq Weight)
 void Comb::FrameBuffer::split3D(FrameBuffer &nextFrame, int frameIdx)
 {
     const int Nx = 16;
     const int Ny = 16;
     const int Nt = 4;
     
-    // 50% Overlap (Step 8) is required for perfect reconstruction with Sine Window
     const int STEP_X = 8;
     const int STEP_Y = 8;
-  //  const int SC_X = 4;
 
-    // FFTW Setup
     fftw_complex *in = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * Nt * Ny * Nx);
     fftw_complex *out = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * Nt * Ny * Nx);
     fftw_plan p_fwd = fftw_plan_dft_3d(Nt, Ny, Nx, in, out, FFTW_FORWARD, FFTW_ESTIMATE);
     fftw_plan p_inv = fftw_plan_dft_3d(Nt, Ny, Nx, out, in, FFTW_BACKWARD, FFTW_ESTIMATE);
 
-    // Windows: Sine Window (Standard for 50% overlap OLA)
     std::vector<double> winX(Nx), winY(Ny), winT(Nt);
     for(int i=0; i<Nx; ++i) winX[i] = sin(M_PI * (i + 0.5) / Nx);
     for(int i=0; i<Ny; ++i) winY[i] = sin(M_PI * (i + 0.5) / Ny);
@@ -329,8 +309,6 @@ void Comb::FrameBuffer::split3D(FrameBuffer &nextFrame, int frameIdx)
 
     FrameBuffer* frames[2] = { this, &nextFrame };
 
-    // Loop Range: Start BEFORE the image, End AFTER the image
-    // Ensures edges are covered by the window center.
     int startY = videoParameters.firstActiveFrameLine - (Ny / 2); 
     int endY = videoParameters.lastActiveFrameLine; 
     
@@ -340,7 +318,6 @@ void Comb::FrameBuffer::split3D(FrameBuffer &nextFrame, int frameIdx)
     for (int y = startY; y < endY; y += STEP_Y) {
         for (int x = startX; x < endX; x += STEP_X) {
 
-            // --- A. Fill Input (With Padding) ---
             for(int i=0; i < Nt*Ny*Nx; ++i) { in[i][0] = 0.0; in[i][1] = 0.0; }
 
             double blockDC = 0.0;
@@ -378,7 +355,6 @@ void Comb::FrameBuffer::split3D(FrameBuffer &nextFrame, int frameIdx)
             }
             if (pixelCount > 0) blockDC /= (double)pixelCount;
 
-            // DC Removal & Windowing
             for(int t=0; t<Nt; ++t) {
                 bool isOddField = (t % 2 != 0);
                 for(int dy=0; dy<Ny; ++dy) {
@@ -401,97 +377,71 @@ void Comb::FrameBuffer::split3D(FrameBuffer &nextFrame, int frameIdx)
                 }
             }
 
-            // --- B. FFT ---
             fftw_execute(p_fwd);
 
             // =========================================================
             // [AI INFERENCE] Neural Network Chroma Mask (nnTransform3D)
             // =========================================================
 
-            // Static singleton: env and session are created once and reused
-            // for every subsequent frame, avoiding repeated model loading overhead.
             static std::unique_ptr<Ort::Env> env;
             static std::unique_ptr<Ort::Session> session;
             static bool model_loaded = false;
             static bool using_cuda = false;
-            static QMutex init_mutex;
+            static QMutex init_mutex;  // protects session initialisation
+            static QMutex run_mutex;   // protects session->Run() - GPU is not thread-safe
 
             {
                 QMutexLocker locker(&init_mutex);
-                    if (!model_loaded) {
-                        try {
-                            env = std::make_unique<Ort::Env>(ORT_LOGGING_LEVEL_WARNING, "NTSC_AI");
-        
-                            Ort::SessionOptions session_options;
-                            // FIX: use all available logical cores, not a hardcoded value
-                            session_options.SetIntraOpNumThreads(QThread::idealThreadCount());
-            
-  #ifdef USE_CUDA
-                    // Attempt to enable the CUDA execution provider (GPU).
-                    // ORT 1.16.3 requires CUDA 11.8 -- matches the system install.
-                    // If CUDA is unavailable at runtime, falls back to CPU silently.
+                if (!model_loaded) {
                     try {
-                        OrtCUDAProviderOptions cuda_options{};
-                        cuda_options.device_id = 0;  // use first GPU
-                        session_options.AppendExecutionProvider_CUDA(cuda_options);
-                        using_cuda = true;
-                        qDebug() << "AI: CUDA execution provider registered (GPU accelerated)";
-                    } catch (const std::exception& cuda_err) {
-                        using_cuda = false;
-                        qWarning() << "AI: CUDA provider failed, falling back to CPU:"
-                                   << cuda_err.what();
-                    }
-  #endif
+                        env = std::make_unique<Ort::Env>(ORT_LOGGING_LEVEL_WARNING, "NTSC_AI");
 
-                    // FIX: locate chroma_net.onnx next to the executable.
-                    // Works on both Windows and Linux; no hardcoded absolute path.
-                    QString modelPathQ = QCoreApplication::applicationDirPath()
-                                        + "/chroma_net.onnx";
+                        Ort::SessionOptions session_options;
+                        session_options.SetIntraOpNumThreads(QThread::idealThreadCount());
 
-#ifdef _WIN32
-                    // FIX: ORT on Windows requires a wide-character (wchar_t) path
-                    std::wstring modelPath = modelPathQ.toStdWString();
-#else
-                    std::string modelPath = modelPathQ.toStdString();
+#ifdef USE_CUDA
+                        try {
+                            OrtCUDAProviderOptions cuda_options{};
+                            cuda_options.device_id = 0;
+                            session_options.AppendExecutionProvider_CUDA(cuda_options);
+                            using_cuda = true;
+                            qDebug() << "AI: CUDA execution provider registered (GPU accelerated)";
+                        } catch (const std::exception& cuda_err) {
+                            using_cuda = false;
+                            qWarning() << "AI: CUDA provider failed, falling back to CPU:"
+                                       << cuda_err.what();
+                        }
 #endif
 
-                    session = std::make_unique<Ort::Session>(
-                        *env, modelPath.c_str(), session_options);
+                        QString modelPathQ = QCoreApplication::applicationDirPath()
+                                            + "/chroma_net.onnx";
 
-                      // Diagnostic - print actual model input/output names
-             //       auto inputCount = session->GetInputCount();
-               //     for (size_t i = 0; i < inputCount; i++) {
-                //        auto inputName = session->GetInputNameAllocated(i, Ort::AllocatorWithDefaultOptions());
-               //         qDebug() << "Model input" << i << ":" << inputName.get();
-             //       }
-            //        auto outputCount = session->GetOutputCount();
-            //        for (size_t i = 0; i < outputCount; i++) {
-            //            auto outputName = session->GetOutputNameAllocated(i, Ort::AllocatorWithDefaultOptions());
-            //            qDebug() << "Model output" << i << ":" << outputName.get();
-            //        }
+#ifdef _WIN32
+                        std::wstring modelPath = modelPathQ.toStdWString();
+#else
+                        std::string modelPath = modelPathQ.toStdString();
+#endif
 
-                    model_loaded = true;
-                    qDebug() << "AI: ONNX model loaded from" << modelPathQ
-                             << (using_cuda ? "[CUDA/GPU]" : "[CPU]");
+                        session = std::make_unique<Ort::Session>(
+                            *env, modelPath.c_str(), session_options);
 
-                } catch (const std::exception& e) {
-                    qCritical() << "AI: Failed to load ONNX model:" << e.what();
-                    // model_loaded stays false; inference block below is skipped,
-                    // and the decoder continues without the neural network mask.
+                        model_loaded = true;
+                        qDebug() << "AI: ONNX model loaded from" << modelPathQ
+                                 << (using_cuda ? "[CUDA/GPU]" : "[CPU]");
+
+                    } catch (const std::exception& e) {
+                        qCritical() << "AI: Failed to load ONNX model:" << e.what();
+                    }
                 }
             }
-        }        
 
             if (model_loaded) {
-                // --- Prepare input tensor ---
-                // Shape: [Batch=1, Channels=2, Depth=4, Height=16, Width=16]
                 std::vector<int64_t> input_shape = {1, 2, 4, 16, 16};
-                constexpr size_t input_element_count = 2048; // 1*2*4*16*16
+                constexpr size_t input_element_count = 2048;
                 std::vector<float> input_tensor_values(input_element_count);
 
                 int ptr = 0;
 
-                // Channel 0: Original magnitude
                 for (int t = 0; t < Nt; ++t) {
                     for (int y = 0; y < Ny; ++y) {
                         for (int x = 0; x < Nx; ++x) {
@@ -503,8 +453,6 @@ void Comb::FrameBuffer::split3D(FrameBuffer &nextFrame, int frameIdx)
                     }
                 }
 
-                // Channel 1: Reflected magnitude
-                // Symmetry axes match the training convention used in Python
                 for (int t = 0; t < Nt; ++t) {
                     int ref_t = (2 - t) % 4;
                     if (ref_t < 0) ref_t += 4;
@@ -523,7 +471,6 @@ void Comb::FrameBuffer::split3D(FrameBuffer &nextFrame, int frameIdx)
                     }
                 }
 
-                // --- Create ORT tensor and run inference ---
                 auto memory_info = using_cuda
                     ? Ort::MemoryInfo("Cuda", OrtArenaAllocator, 0, OrtMemTypeDefault)
                     : Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
@@ -539,14 +486,16 @@ void Comb::FrameBuffer::split3D(FrameBuffer &nextFrame, int frameIdx)
                 const char* input_names[]  = {"input"};
                 const char* output_names[] = {"output"};
 
-                auto output_tensors = session->Run(
-                    Ort::RunOptions{nullptr},
-                    input_names,  &input_tensor, 1,
-                    output_names, 1
-                );
+                // FIX: serialize GPU inference - CUDA session->Run is not thread-safe
+                auto output_tensors = [&]() {
+                    QMutexLocker locker(&run_mutex);
+                    return session->Run(
+                        Ort::RunOptions{nullptr},
+                        input_names, &input_tensor, 1,
+                        output_names, 1
+                    );
+                }();
 
-                // --- Apply the neural network gain mask ---
-                // Output shape: [1, 1, 4, 16, 16]
                 float* mask_data = output_tensors[0].GetTensorMutableData<float>();
 
                 int mask_idx = 0;
@@ -563,10 +512,8 @@ void Comb::FrameBuffer::split3D(FrameBuffer &nextFrame, int frameIdx)
             }
             // =========================================================
 
-            // --- D. IFFT ---
             fftw_execute(p_inv);
 
-            // --- E. Accumulate (With Boundary Guards) ---
             for (int t = 0; t < Nt; ++t) {
                 int f_idx = t / 2;
                 bool isOddField = (t % 2 != 0);
@@ -599,7 +546,6 @@ void Comb::FrameBuffer::split3D(FrameBuffer &nextFrame, int frameIdx)
     fftw_free(in); fftw_free(out);
 }
 
-// [MODIFIED] Finalize OLA: Removed 2D Fallback
 void Comb::FrameBuffer::finalizeOLA() {
     int writeHeight = videoParameters.lastActiveFrameLine;
     int writeWidth = videoParameters.activeVideoEnd;
