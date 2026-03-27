@@ -1,0 +1,83 @@
+name: Build Windows EXE (CUDA 11.8 GPU)
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:  # allows manual trigger from the Actions tab
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-qt6-base
+            mingw-w64-x86_64-fftw
+
+      # Reliable headless CUDA install via dedicated action
+      - name: Install CUDA 11.8
+        uses: Jimver/cuda-toolkit@v0.2.11
+        with:
+          cuda: '11.8.0'
+          method: network
+          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev"]'
+
+      # ORT 1.16.3 GPU is the last version supporting CUDA 11.8
+      - name: Download ONNX Runtime 1.16.3 GPU
+        shell: pwsh
+        run: |
+          $url = "https://github.com/microsoft/onnxruntime/releases/download/v1.16.3/onnxruntime-win-x64-gpu-1.16.3.zip"
+          Invoke-WebRequest -Uri $url -OutFile ort.zip
+          Expand-Archive -Path ort.zip -DestinationPath C:\ort
+
+      - name: Configure (GPU build)
+        shell: msys2 {0}
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DORT_ROOT="C:/ort/onnxruntime-win-x64-gpu-1.16.3" \
+            -DUSE_CUDA=ON
+
+      - name: Build
+        shell: msys2 {0}
+        run: cmake --build build --parallel
+
+      - name: Collect output
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path dist
+
+          # Executable
+          Copy-Item build\tools\ld-chroma-decoder\ld-chroma-decoder.exe dist\
+
+          # ONNX model - must sit next to the exe at runtime
+          Copy-Item tools\ld-chroma-decoder\chroma_net.onnx dist\
+
+          # ORT GPU DLLs (core + CUDA provider)
+          Copy-Item C:\ort\onnxruntime-win-x64-gpu-1.16.3\lib\onnxruntime.dll                    dist\
+          Copy-Item C:\ort\onnxruntime-win-x64-gpu-1.16.3\lib\onnxruntime_providers_shared.dll   dist\
+          Copy-Item C:\ort\onnxruntime-win-x64-gpu-1.16.3\lib\onnxruntime_providers_cuda.dll     dist\
+
+          # CUDA runtime DLLs needed on machines without a full CUDA install
+          # (on your own PC these already exist, but included for portability)
+          $cudaBin = "$env:CUDA_PATH\bin"
+          Copy-Item "$cudaBin\cudart64_110.dll"  dist\
+          Copy-Item "$cudaBin\cublas64_11.dll"   dist\
+          Copy-Item "$cudaBin\cublasLt64_11.dll" dist\
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ld-chroma-decoder-windows-cuda
+          path: dist\
