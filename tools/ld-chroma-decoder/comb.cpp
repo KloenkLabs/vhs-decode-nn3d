@@ -454,6 +454,18 @@ void Comb::FrameBuffer::split3D(FrameBuffer &nextFrame, int frameIdx)
                     session = std::make_unique<Ort::Session>(
                         *env, modelPath.c_str(), session_options);
 
+                      // Diagnostic - print actual model input/output names
+                    auto inputCount = session->GetInputCount();
+                    for (size_t i = 0; i < inputCount; i++) {
+                        auto inputName = session->GetInputNameAllocated(i, Ort::AllocatorWithDefaultOptions());
+                        qDebug() << "Model input" << i << ":" << inputName.get();
+                    }
+                    auto outputCount = session->GetOutputCount();
+                    for (size_t i = 0; i < outputCount; i++) {
+                        auto outputName = session->GetOutputNameAllocated(i, Ort::AllocatorWithDefaultOptions());
+                        qDebug() << "Model output" << i << ":" << outputName.get();
+                    }
+
                     model_loaded = true;
                     qDebug() << "AI: ONNX model loaded from" << modelPathQ
                              << (using_cuda ? "[CUDA/GPU]" : "[CPU]");
