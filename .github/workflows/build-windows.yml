@@ -52,7 +52,8 @@ jobs:
             -DUSE_CUDA=ON \
             -DUSE_QT_VERSION=6
             -DBUILD_LDF_READER=OFF \
-            -DBUILD_EFM_DECODER=OFF
+            -DBUILD_EFM_DECODER=OFF \
+            -DBUILD_LD_ANALYSE=OFF
 
       - name: Build
         shell: msys2 {0}
