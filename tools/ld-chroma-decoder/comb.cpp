@@ -491,7 +491,7 @@ void Comb::FrameBuffer::split3D(FrameBuffer &nextFrame, int frameIdx)
                      input_names, &input_tensor, 1,
                      output_names, 1
                     );
-                }();
+              
 
                 float* mask_data = output_tensors[0].GetTensorMutableData<float>();
 
