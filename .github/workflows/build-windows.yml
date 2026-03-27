@@ -25,6 +25,7 @@ jobs:
             mingw-w64-x86_64-qt6-base
             mingw-w64-x86_64-qt6-5compat
             mingw-w64-x86_64-fftw
+            mingw-w64-x86_64-ffmpeg
 
       # Reliable headless CUDA install via dedicated action
       - name: Install CUDA 11.8
@@ -50,6 +51,8 @@ jobs:
             -DORT_ROOT="C:/ort/onnxruntime-win-x64-gpu-1.16.3" \
             -DUSE_CUDA=ON \
             -DUSE_QT_VERSION=6
+            -DBUILD_LDF_READER=OFF \
+            -DBUILD_EFM_DECODER=OFF
 
       - name: Build
         shell: msys2 {0}
