@@ -55,7 +55,7 @@ jobs:
             -DUSE_QWT=OFF \
             -DBUILD_LDF_READER=OFF \
             -DBUILD_TESTING=OFF \
-            -DCMAKE_CXX_FLAGS="-DORT_API_CALL=__stdcall -DORT_EXPORT="
+            -DCMAKE_CXX_FLAGS="-D_stdcall=__stdcall -DORT_EXPORT="
 
       - name: Build
         shell: msys2 {0}
