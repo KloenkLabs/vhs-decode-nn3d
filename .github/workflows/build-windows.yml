@@ -98,11 +98,22 @@ jobs:
           Copy-Item "$cudaBin\cublas64_11.dll"   dist\
           Copy-Item "$cudaBin\cublasLt64_11.dll" dist\
 
-         # Copy ALL MinGW/Qt6 runtime DLLs needed
+          # MinGW and Qt6 runtime DLLs
           $mingwBin = "D:/a/_temp/msys64/mingw64/bin"
-          Get-ChildItem "$mingwBin\*.dll" | Where-Object {
-              $_.Name -match "^(Qt6Core|libgcc|libstdc|libwinpthread|libfftw3|libicu|libzstd|libpcre2|libdouble|libharfbuzz|libmd4c|libb2|libfreetype|libglib|libintl|libpng|zlib|libbz2|libiconv)"
-          } | Copy-Item -Destination dist\
+          Copy-Item "$mingwBin\libgcc_s_seh-1.dll"        dist\
+          Copy-Item "$mingwBin\libstdc++-6.dll"            dist\
+          Copy-Item "$mingwBin\libwinpthread-1.dll"        dist\
+          Copy-Item "$mingwBin\Qt6Core.dll"                dist\
+          Copy-Item "$mingwBin\libfftw3-3.dll"             dist\
+          Copy-Item "$mingwBin\libicuin78.dll"             dist\
+          Copy-Item "$mingwBin\libicuuc78.dll"             dist\
+          Copy-Item "$mingwBin\libicudt78.dll"             dist\
+          Copy-Item "$mingwBin\libzstd.dll"                dist\
+          Copy-Item "$mingwBin\libpcre2-16-0.dll"          dist\
+          Copy-Item "$mingwBin\libdouble-conversion.dll"   dist\
+          Copy-Item "$mingwBin\libharfbuzz-0.dll"          dist\
+          Copy-Item "$mingwBin\libmd4c.dll"                dist\
+          Copy-Item "$mingwBin\libb2-1.dll"                dist\
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
