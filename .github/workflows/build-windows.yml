@@ -98,18 +98,11 @@ jobs:
           Copy-Item "$cudaBin\cublas64_11.dll"   dist\
           Copy-Item "$cudaBin\cublasLt64_11.dll" dist\
 
-          # MinGW runtime DLLs required to run on systems without MSYS2
+         # Copy ALL MinGW/Qt6 runtime DLLs needed
           $mingwBin = "D:/a/_temp/msys64/mingw64/bin"
-          Copy-Item "$mingwBin\libgcc_s_seh-1.dll"   dist\
-          Copy-Item "$mingwBin\libstdc++-6.dll"       dist\
-          Copy-Item "$mingwBin\libwinpthread-1.dll"   dist\
-
-          # Qt runtime DLLs
-          $qtBin = "D:/a/_temp/msys64/mingw64/bin"
-          Copy-Item "$qtBin\Qt6Core.dll"         dist\
-
-          # FFTW runtime
-          Copy-Item "$qtBin\libfftw3-3.dll"      dist\
+          Get-ChildItem "$mingwBin\*.dll" | Where-Object {
+              $_.Name -match "^(Qt6Core|libgcc|libstdc|libwinpthread|libfftw3|libicu|libzstd|libpcre2|libdouble|libharfbuzz|libmd4c|libb2|libfreetype|libglib|libintl|libpng|zlib|libbz2|libiconv)"
+          } | Copy-Item -Destination dist\
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
