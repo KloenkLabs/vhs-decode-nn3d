@@ -51,13 +51,13 @@ jobs:
             -DORT_ROOT="C:/ort/onnxruntime-win-x64-gpu-1.16.3" \
             -DUSE_CUDA=ON \
             -DUSE_QT_VERSION=6
+            -DUSE_QWT=OFF \
             -DBUILD_LDF_READER=OFF \
-            -DBUILD_EFM_DECODER=OFF \
-            -DBUILD_LD_ANALYSE=OFF
+            -DBUILD_TESTING=OFF
 
       - name: Build
         shell: msys2 {0}
-        run: cmake --build build --parallel
+        run: cmake --build build --parallel --target ld-chroma-decoder
 
       - name: Collect output
         shell: pwsh
