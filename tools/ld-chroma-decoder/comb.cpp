@@ -20,6 +20,7 @@
 #include <cmath>
 #include <memory>
 #include <utility>
+#include <QMutex>
 #include <vector>
 #include <QMap>
 #include <QThread>                  // FIX: needed for QThread::idealThreadCount()
@@ -413,15 +414,18 @@ void Comb::FrameBuffer::split3D(FrameBuffer &nextFrame, int frameIdx)
             static std::unique_ptr<Ort::Session> session;
             static bool model_loaded = false;
             static bool using_cuda = false;
+            static QMutex init_mutex;
 
-            if (!model_loaded) {
-                try {
-                    env = std::make_unique<Ort::Env>(ORT_LOGGING_LEVEL_WARNING, "NTSC_AI");
-
-                    Ort::SessionOptions session_options;
-                    // FIX: use all available logical cores, not a hardcoded value
-                    session_options.SetIntraOpNumThreads(QThread::idealThreadCount());
-
+            {
+                QMutexLocker locker(&init_mutex);
+                    if (!model_loaded) {
+                        try {
+                            env = std::make_unique<Ort::Env>(ORT_LOGGING_LEVEL_WARNING, "NTSC_AI");
+        
+                            Ort::SessionOptions session_options;
+                            // FIX: use all available logical cores, not a hardcoded value
+                            session_options.SetIntraOpNumThreads(QThread::idealThreadCount());
+            
   #ifdef USE_CUDA
                     // Attempt to enable the CUDA execution provider (GPU).
                     // ORT 1.16.3 requires CUDA 11.8 -- matches the system install.
@@ -476,6 +480,7 @@ void Comb::FrameBuffer::split3D(FrameBuffer &nextFrame, int frameIdx)
                     // and the decoder continues without the neural network mask.
                 }
             }
+        }        
 
             if (model_loaded) {
                 // --- Prepare input tensor ---
