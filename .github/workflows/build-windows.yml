@@ -23,6 +23,7 @@ jobs:
             mingw-w64-x86_64-ninja
             mingw-w64-x86_64-gcc
             mingw-w64-x86_64-qt6-base
+            mingw-w64-x86_64-qt6-5compat
             mingw-w64-x86_64-fftw
 
       # Reliable headless CUDA install via dedicated action
@@ -47,7 +48,8 @@ jobs:
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DORT_ROOT="C:/ort/onnxruntime-win-x64-gpu-1.16.3" \
-            -DUSE_CUDA=ON
+            -DUSE_CUDA=ON \
+            -DUSE_QT_VERSION=6
 
       - name: Build
         shell: msys2 {0}
