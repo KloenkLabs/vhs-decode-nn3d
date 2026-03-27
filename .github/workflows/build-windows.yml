@@ -1,4 +1,4 @@
-name: Build Windows EXE (CUDA 11.8 GPU)
+name: Build Windows EXE (CUDA 12.4 GPU)
 
 on:
   push:
@@ -37,7 +37,7 @@ jobs:
           method: network
           sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev"]'
 
-      # ORT 1.16.3 GPU is the last version supporting CUDA 11.8
+      # ORT 1.19.2 GPU is the last version supporting CUDA 12.4
       - name: Download ONNX Runtime 1.19.2 GPU
         shell: pwsh
         run: |
@@ -48,7 +48,7 @@ jobs:
       - name: Create MinGW import library for ORT
         shell: msys2 {0}
         run: |
-          cd C:/ort/onnxruntime-win-x64-gpu-1.16.3
+          cd C:/ort/onnxruntime-win-x64-gpu-1.19.2
           DLL=$(find . -name "onnxruntime.dll" | head -1)
           echo "Found DLL at: $DLL"
           gendef $DLL
@@ -75,6 +75,12 @@ jobs:
         shell: msys2 {0}
         run: cmake --build build --parallel --target ld-chroma-decoder
 
+       - name: Check CUDA DLL names
+        shell: pwsh
+        run: |
+          dir "$env:CUDA_PATH\bin\cuda*.dll"
+          dir "$env:CUDA_PATH\bin\cublas*.dll"  
+
       - name: Collect output
         shell: pwsh
         run: |
@@ -87,9 +93,9 @@ jobs:
           Copy-Item tools\ld-chroma-decoder\chroma_net.onnx dist\
 
           # ORT GPU DLLs (core + CUDA provider)
-          Copy-Item C:\ort\onnxruntime-win-x64-gpu-1.16.3\lib\onnxruntime.dll                    dist\
-          Copy-Item C:\ort\onnxruntime-win-x64-gpu-1.16.3\lib\onnxruntime_providers_shared.dll   dist\
-          Copy-Item C:\ort\onnxruntime-win-x64-gpu-1.16.3\lib\onnxruntime_providers_cuda.dll     dist\
+          Copy-Item C:\ort\onnxruntime-win-x64-gpu-1.19.2\lib\onnxruntime.dll                    dist\
+          Copy-Item C:\ort\onnxruntime-win-x64-gpu-1.19.2\lib\onnxruntime_providers_shared.dll   dist\
+          Copy-Item C:\ort\onnxruntime-win-x64-gpu-1.19.2\lib\onnxruntime_providers_cuda.dll     dist\
 
           # CUDA runtime DLLs needed on machines without a full CUDA install
           # (on your own PC these already exist, but included for portability)
