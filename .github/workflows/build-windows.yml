@@ -48,10 +48,16 @@ jobs:
       - name: Create MinGW import library for ORT
         shell: msys2 {0}
         run: |
+          # Find where the DLL actually is
+          find C:/ort -name "onnxruntime.dll" 
+          # Generate import library from the DLL
           cd C:/ort/onnxruntime-win-x64-gpu-1.16.3
-          ls lib/ bin/ || true
-          gendef lib/onnxruntime.dll 2>/dev/null || gendef bin/onnxruntime.dll 2>/dev/null || find . -name "onnxruntime.dll" -exec gendef {} \;
+          DLL=$(find . -name "onnxruntime.dll" | head -1)
+          echo "Found DLL at: $DLL"
+          gendef $DLL
           dlltool -d onnxruntime.def -l lib/libonnxruntime.dll.a -D onnxruntime.dll
+          echo "Files in lib/:"
+          ls lib/
 
       - name: Configure (GPU build)
         shell: msys2 {0}
