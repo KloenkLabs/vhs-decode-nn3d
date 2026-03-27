@@ -48,9 +48,10 @@ jobs:
       - name: Create MinGW import library for ORT
         shell: msys2 {0}
         run: |
-          cd C:/ort/onnxruntime-win-x64-gpu-1.16.3/lib
-          gendef onnxruntime.dll
-          dlltool -d onnxruntime.def -l libonnxruntime.dll.a -D onnxruntime.dll
+          cd C:/ort/onnxruntime-win-x64-gpu-1.16.3
+          ls lib/ bin/ || true
+          gendef lib/onnxruntime.dll 2>/dev/null || gendef bin/onnxruntime.dll 2>/dev/null || find . -name "onnxruntime.dll" -exec gendef {} \;
+          dlltool -d onnxruntime.def -l lib/libonnxruntime.dll.a -D onnxruntime.dll
 
       - name: Configure (GPU build)
         shell: msys2 {0}
