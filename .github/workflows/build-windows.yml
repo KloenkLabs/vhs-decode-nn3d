@@ -44,6 +44,13 @@ jobs:
           Invoke-WebRequest -Uri $url -OutFile ort.zip
           Expand-Archive -Path ort.zip -DestinationPath C:\ort
 
+      - name: Create MinGW import library for ORT
+        shell: msys2 {0}
+        run: |
+          cd C:/ort/onnxruntime-win-x64-gpu-1.16.3/lib
+          gendef onnxruntime.dll
+          dlltool -d onnxruntime.def -l libonnxruntime.dll.a -D onnxruntime.dll
+
       - name: Configure (GPU build)
         shell: msys2 {0}
         run: |
