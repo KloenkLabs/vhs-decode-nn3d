@@ -27,7 +27,7 @@ jobs:
             mingw-w64-x86_64-fftw
             mingw-w64-x86_64-ffmpeg
             mingw-w64-x86_64-qwt-qt6
-            mingw-w64-x86_64-binutils
+            mingw-w64-x86_64-tools-git
 
       # Reliable headless CUDA install via dedicated action
       - name: Install CUDA 11.8
