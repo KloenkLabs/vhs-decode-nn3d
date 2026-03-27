@@ -388,7 +388,7 @@ void Comb::FrameBuffer::split3D(FrameBuffer &nextFrame, int frameIdx)
             static bool model_loaded = false;
             static bool using_cuda = false;
             static QMutex init_mutex;  // protects session initialisation
-            static QMutex run_mutex;   // protects session->Run() - GPU is not thread-safe
+//            static QMutex run_mutex;   // protects session->Run() - GPU is not thread-safe
 
             {
                 QMutexLocker locker(&init_mutex);
@@ -485,13 +485,11 @@ void Comb::FrameBuffer::split3D(FrameBuffer &nextFrame, int frameIdx)
                 const char* input_names[]  = {"input"};
                 const char* output_names[] = {"output"};
 
-                // FIX: serialize GPU inference - CUDA session->Run is not thread-safe
-                auto output_tensors = [&]() {
-                    QMutexLocker locker(&run_mutex);
-                    return session->Run(
-                        Ort::RunOptions{nullptr},
-                        input_names, &input_tensor, 1,
-                        output_names, 1
+                // FIX: serialize GPU inference - CUDA session->Run is not thread-safe -- CHANGED BACK
+                auto output_tensors = session->Run(
+                     Ort::RunOptions{nullptr},
+                     input_names, &input_tensor, 1,
+                     output_names, 1
                     );
                 }();
 
