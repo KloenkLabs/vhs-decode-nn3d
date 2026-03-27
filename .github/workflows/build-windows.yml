@@ -75,7 +75,7 @@ jobs:
         shell: msys2 {0}
         run: cmake --build build --parallel --target ld-chroma-decoder
 
-       - name: Check CUDA DLL names
+      - name: Check CUDA DLL names
         shell: pwsh
         run: |
           dir "$env:CUDA_PATH\bin\cuda*.dll"
