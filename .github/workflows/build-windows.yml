@@ -30,18 +30,18 @@ jobs:
             mingw-w64-x86_64-tools-git
 
       # Reliable headless CUDA install via dedicated action
-      - name: Install CUDA 11.8
+      - name: Install CUDA 12.4
         uses: Jimver/cuda-toolkit@v0.2.11
         with:
-          cuda: '11.8.0'
+          cuda: '12.4.0'
           method: network
           sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev"]'
 
       # ORT 1.16.3 GPU is the last version supporting CUDA 11.8
-      - name: Download ONNX Runtime 1.16.3 GPU
+      - name: Download ONNX Runtime 1.19.2 GPU
         shell: pwsh
         run: |
-          $url = "https://github.com/microsoft/onnxruntime/releases/download/v1.16.3/onnxruntime-win-x64-gpu-1.16.3.zip"
+          $url = "https://github.com/microsoft/onnxruntime/releases/download/v1.19.2/onnxruntime-win-x64-gpu-1.19.2.zip"
           Invoke-WebRequest -Uri $url -OutFile ort.zip
           Expand-Archive -Path ort.zip -DestinationPath C:\ort
 
@@ -63,7 +63,7 @@ jobs:
         run: |
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DORT_ROOT="C:/ort/onnxruntime-win-x64-gpu-1.16.3" \
+            -DORT_ROOT="C:/ort/onnxruntime-win-x64-gpu-1.19.2" \
             -DUSE_CUDA=ON \
             -DUSE_QT_VERSION=6 \
             -DUSE_QWT=OFF \
@@ -94,9 +94,9 @@ jobs:
           # CUDA runtime DLLs needed on machines without a full CUDA install
           # (on your own PC these already exist, but included for portability)
           $cudaBin = "$env:CUDA_PATH\bin"
-          Copy-Item "$cudaBin\cudart64_110.dll"  dist\
-          Copy-Item "$cudaBin\cublas64_11.dll"   dist\
-          Copy-Item "$cudaBin\cublasLt64_11.dll" dist\
+          Copy-Item "$cudaBin\cudart64_12.dll"  dist\
+          Copy-Item "$cudaBin\cublas64_12.dll"   dist\
+          Copy-Item "$cudaBin\cublasLt64_12.dll" dist\
 
           # MinGW and Qt6 runtime DLLs
           $mingwBin = "D:/a/_temp/msys64/mingw64/bin"
