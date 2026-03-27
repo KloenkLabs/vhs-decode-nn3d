@@ -46,6 +46,9 @@ public:
         double cNRLevel = 0.0;
         double yNRLevel = 0.0;
 
+        double chromaWeight = 1.4;
+        double adaptThreshold = 0.1;
+
         qint32 getLookBehind() const;
         qint32 getLookAhead() const;
     };
