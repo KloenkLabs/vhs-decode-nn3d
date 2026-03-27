@@ -403,6 +403,7 @@ void Comb::FrameBuffer::split3D(FrameBuffer &nextFrame, int frameIdx)
                         try {
                             OrtCUDAProviderOptions cuda_options{};
                             cuda_options.device_id = 0;
+                            cuda_options.cudnn_conv_algo_search = OrtCudnnConvAlgoSearchHeuristic;
                             session_options.AppendExecutionProvider_CUDA(cuda_options);
                             using_cuda = true;
                             qDebug() << "AI: CUDA execution provider registered (GPU accelerated)";
