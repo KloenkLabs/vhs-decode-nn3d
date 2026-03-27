@@ -104,6 +104,13 @@ jobs:
           Copy-Item "$mingwBin\libstdc++-6.dll"       dist\
           Copy-Item "$mingwBin\libwinpthread-1.dll"   dist\
 
+          # Qt runtime DLLs
+          $qtBin = "D:/a/_temp/msys64/mingw64/bin"
+          Copy-Item "$qtBin\Qt6Core.dll"         dist\
+
+          # FFTW runtime
+          Copy-Item "$qtBin\libfftw3-3.dll"      dist\
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
