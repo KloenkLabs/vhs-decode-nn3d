@@ -18,6 +18,7 @@
 #include "firfilter.h"
 #include <algorithm>
 #include <cmath>
+#include <complex>
 #include <memory>
 #include <utility>
 #include <QMutex>
@@ -315,6 +316,187 @@ void Comb::FrameBuffer::split3D(FrameBuffer &nextFrame, int frameIdx)
     int startX = videoParameters.activeVideoStart - (Nx / 2);
     int endX = videoParameters.activeVideoEnd;
 
+    struct BlockContext {
+        int x;
+        int y;
+        std::vector<std::complex<double>> spectrum;
+    };
+
+    std::vector<BlockContext> pendingBlocks;
+    std::vector<float> pendingInputTensors;
+    pendingBlocks.reserve(256);
+    pendingInputTensors.reserve(256 * 2 * Nt * Ny * Nx);
+
+    auto flushPendingBlocks = [&](void) {
+        if (pendingBlocks.empty()) return;
+
+        const int batchSize = static_cast<int>(pendingBlocks.size());
+        const size_t blockElements = static_cast<size_t>(Nt * Ny * Nx);
+
+        static std::unique_ptr<Ort::Env> env;
+        static std::unique_ptr<Ort::Session> session;
+        static bool model_loaded = false;
+        static bool using_cuda = false;
+        static bool supports_batched_input = true;
+        static QMutex init_mutex;
+
+        {
+            QMutexLocker locker(&init_mutex);
+            if (!model_loaded) {
+                try {
+                    env = std::make_unique<Ort::Env>(ORT_LOGGING_LEVEL_WARNING, "NTSC_AI");
+
+                    Ort::SessionOptions session_options;
+                    session_options.SetIntraOpNumThreads(QThread::idealThreadCount());
+
+#ifdef USE_CUDA
+                    try {
+                        OrtCUDAProviderOptions cuda_options{};
+                        cuda_options.device_id = 0;
+                        cuda_options.cudnn_conv_algo_search = OrtCudnnConvAlgoSearchHeuristic;
+                        session_options.AppendExecutionProvider_CUDA(cuda_options);
+                        using_cuda = true;
+                        qDebug() << "AI: CUDA execution provider registered (GPU accelerated)";
+                    } catch (const std::exception& cuda_err) {
+                        using_cuda = false;
+                        qWarning() << "AI: CUDA provider failed, falling back to CPU:"
+                                   << cuda_err.what();
+                    }
+#endif
+
+                    QString modelPathQ = QCoreApplication::applicationDirPath()
+                                        + "/chroma_net.onnx";
+
+#ifdef _WIN32
+                    std::wstring modelPath = modelPathQ.toStdWString();
+#else
+                    std::string modelPath = modelPathQ.toStdString();
+#endif
+
+                    session = std::make_unique<Ort::Session>(
+                        *env, modelPath.c_str(), session_options);
+
+                    model_loaded = true;
+                    qDebug() << "AI: ONNX model loaded from" << modelPathQ
+                             << (using_cuda ? "[CUDA/GPU]" : "[CPU]");
+
+                } catch (const std::exception& e) {
+                    qCritical() << "AI: Failed to load ONNX model:" << e.what();
+                }
+            }
+        }
+
+        if (model_loaded) {
+            const char* input_names[]  = {"input"};
+            const char* output_names[] = {"output"};
+            std::vector<float> maskValues(batchSize * blockElements, 1.0f);
+            bool runSuccess = false;
+
+            try {
+                std::vector<int64_t> input_shape = {batchSize, 2, Nt, Ny, Nx};
+                auto memory_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+                Ort::Value input_tensor = Ort::Value::CreateTensor<float>(
+                    memory_info,
+                    pendingInputTensors.data(),
+                    pendingInputTensors.size(),
+                    input_shape.data(),
+                    input_shape.size()
+                );
+
+                auto output_tensors = session->Run(
+                    Ort::RunOptions{nullptr},
+                    input_names, &input_tensor, 1,
+                    output_names, 1
+                );
+                float* mask_data = output_tensors[0].GetTensorMutableData<float>();
+                size_t maskCount = output_tensors[0].GetTensorTypeAndShapeInfo().GetElementCount();
+                if (maskCount >= maskValues.size()) {
+                    std::copy(mask_data, mask_data + maskValues.size(), maskValues.begin());
+                    runSuccess = true;
+                }
+            } catch (const std::exception& e) {
+                if (supports_batched_input && batchSize > 1) {
+                    supports_batched_input = false;
+                    qWarning() << "AI: Batched ONNX inference failed, falling back to per-block inference:" << e.what();
+                } else {
+                    qWarning() << "AI: ONNX inference failed, using neutral mask:" << e.what();
+                }
+            }
+
+            if (!runSuccess && !supports_batched_input) {
+                auto memory_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+                for (int b = 0; b < batchSize; ++b) {
+                    try {
+                        std::vector<int64_t> single_shape = {1, 2, Nt, Ny, Nx};
+                        float* singleInput = pendingInputTensors.data() + (b * 2 * blockElements);
+                        Ort::Value input_tensor = Ort::Value::CreateTensor<float>(
+                            memory_info,
+                            singleInput,
+                            2 * blockElements,
+                            single_shape.data(),
+                            single_shape.size()
+                        );
+
+                        auto output_tensors = session->Run(
+                            Ort::RunOptions{nullptr},
+                            input_names, &input_tensor, 1,
+                            output_names, 1
+                        );
+                        float* mask_data = output_tensors[0].GetTensorMutableData<float>();
+                        std::copy(mask_data, mask_data + blockElements, maskValues.begin() + (b * blockElements));
+                    } catch (const std::exception& e) {
+                        qWarning() << "AI: Per-block ONNX inference failed, using neutral mask:" << e.what();
+                    }
+                }
+                runSuccess = true;
+            }
+
+            if (!runSuccess) {
+                std::fill(maskValues.begin(), maskValues.end(), 1.0f);
+            }
+
+            for (int b = 0; b < batchSize; ++b) {
+                auto &block = pendingBlocks[b];
+                for (size_t i = 0; i < blockElements; ++i) {
+                    out[i][0] = block.spectrum[i].real() * maskValues[b * blockElements + i];
+                    out[i][1] = block.spectrum[i].imag() * maskValues[b * blockElements + i];
+                }
+
+                fftw_execute(p_inv);
+
+                for (int t = 0; t < Nt; ++t) {
+                    int f_idx = t / 2;
+                    bool isOddField = (t % 2 != 0);
+                    FrameBuffer* targetFrame = frames[f_idx];
+
+                    for (int dy = 0; dy < Ny; ++dy) {
+                        int absY = block.y + dy;
+
+                        if (absY < videoParameters.firstActiveFrameLine || absY >= videoParameters.lastActiveFrameLine) continue;
+                        if ((absY % 2) != isOddField) continue;
+
+                        for (int dx = 0; dx < Nx; ++dx) {
+                            int absX = block.x + dx;
+                            if (absX < videoParameters.activeVideoStart || absX >= videoParameters.activeVideoEnd) continue;
+
+                            int idx = IDX3(t, dy, dx, Nt, Ny, Nx);
+                            double val = in[idx][0] / (double)(Nt * Ny * Nx);
+                            double w = winT[t] * winY[dy] * winX[dx];
+
+                            targetFrame->accChroma[absY][absX] += val * w;
+                            targetFrame->weightSum[absY][absX] += w * w;
+                        }
+                    }
+                }
+            }
+        }
+
+        pendingBlocks.clear();
+        pendingInputTensors.clear();
+    };
+
+    constexpr int NN_BATCH_BLOCKS = 256;
+
     for (int y = startY; y < endY; y += STEP_Y) {
         for (int x = startX; x < endX; x += STEP_X) {
 
@@ -379,166 +561,54 @@ void Comb::FrameBuffer::split3D(FrameBuffer &nextFrame, int frameIdx)
 
             fftw_execute(p_fwd);
 
-            // =========================================================
-            // [AI INFERENCE] Neural Network Chroma Mask (nnTransform3D)
-            // =========================================================
+            BlockContext block;
+            block.x = x;
+            block.y = y;
+            block.spectrum.resize(Nt * Ny * Nx);
+            for (int i = 0; i < Nt * Ny * Nx; ++i) {
+                block.spectrum[i] = std::complex<double>(out[i][0], out[i][1]);
+            }
 
-            static std::unique_ptr<Ort::Env> env;
-            static std::unique_ptr<Ort::Session> session;
-            static bool model_loaded = false;
-            static bool using_cuda = false;
-            static QMutex init_mutex;  // protects session initialisation
-//            static QMutex run_mutex;   // protects session->Run() - GPU is not thread-safe
+            pendingBlocks.push_back(std::move(block));
+            const size_t base = pendingInputTensors.size();
+            pendingInputTensors.resize(base + (2 * Nt * Ny * Nx));
 
-            {
-                QMutexLocker locker(&init_mutex);
-                if (!model_loaded) {
-                    try {
-                        env = std::make_unique<Ort::Env>(ORT_LOGGING_LEVEL_WARNING, "NTSC_AI");
-
-                        Ort::SessionOptions session_options;
-                        session_options.SetIntraOpNumThreads(QThread::idealThreadCount());
-
-#ifdef USE_CUDA
-                        try {
-                            OrtCUDAProviderOptions cuda_options{};
-                            cuda_options.device_id = 0;
-                            cuda_options.cudnn_conv_algo_search = OrtCudnnConvAlgoSearchHeuristic;
-                            session_options.AppendExecutionProvider_CUDA(cuda_options);
-                            using_cuda = true;
-                            qDebug() << "AI: CUDA execution provider registered (GPU accelerated)";
-                        } catch (const std::exception& cuda_err) {
-                            using_cuda = false;
-                            qWarning() << "AI: CUDA provider failed, falling back to CPU:"
-                                       << cuda_err.what();
-                        }
-#endif
-
-                        QString modelPathQ = QCoreApplication::applicationDirPath()
-                                            + "/chroma_net.onnx";
-
-#ifdef _WIN32
-                        std::wstring modelPath = modelPathQ.toStdWString();
-#else
-                        std::string modelPath = modelPathQ.toStdString();
-#endif
-
-                        session = std::make_unique<Ort::Session>(
-                            *env, modelPath.c_str(), session_options);
-
-                        model_loaded = true;
-                        qDebug() << "AI: ONNX model loaded from" << modelPathQ
-                                 << (using_cuda ? "[CUDA/GPU]" : "[CPU]");
-
-                    } catch (const std::exception& e) {
-                        qCritical() << "AI: Failed to load ONNX model:" << e.what();
+            size_t ptr = base;
+            for (int t = 0; t < Nt; ++t) {
+                for (int yy = 0; yy < Ny; ++yy) {
+                    for (int xx = 0; xx < Nx; ++xx) {
+                        int idx = IDX3(t, yy, xx, Nt, Ny, Nx);
+                        double mag = sqrt(out[idx][0]*out[idx][0]
+                                       + out[idx][1]*out[idx][1]);
+                        pendingInputTensors[ptr++] = static_cast<float>(mag);
                     }
                 }
             }
-
-            if (model_loaded) {
-                std::vector<int64_t> input_shape = {1, 2, 4, 16, 16};
-                constexpr size_t input_element_count = 2048;
-                std::vector<float> input_tensor_values(input_element_count);
-
-                int ptr = 0;
-
-                for (int t = 0; t < Nt; ++t) {
-                    for (int y = 0; y < Ny; ++y) {
-                        for (int x = 0; x < Nx; ++x) {
-                            int idx = IDX3(t, y, x, Nt, Ny, Nx);
-                            double mag = sqrt(out[idx][0]*out[idx][0]
-                                           + out[idx][1]*out[idx][1]);
-                            input_tensor_values[ptr++] = static_cast<float>(mag);
-                        }
-                    }
-                }
-
-                for (int t = 0; t < Nt; ++t) {
-                    int ref_t = (2 - t) % 4;
-                    if (ref_t < 0) ref_t += 4;
-
-                    for (int y = 0; y < Ny; ++y) {
-                        int ref_y = (16 - y) % 16;
-                        for (int x = 0; x < Nx; ++x) {
-                            int ref_x = (8 - x) % 16;
-                            if (ref_x < 0) ref_x += 16;
-
-                            int idx_ref = IDX3(ref_t, ref_y, ref_x, Nt, Ny, Nx);
-                            double mag_ref = sqrt(out[idx_ref][0]*out[idx_ref][0]
-                                               + out[idx_ref][1]*out[idx_ref][1]);
-                            input_tensor_values[ptr++] = static_cast<float>(mag_ref);
-                        }
-                    }
-                }
-
-                auto memory_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-
-                Ort::Value input_tensor = Ort::Value::CreateTensor<float>(
-                    memory_info,
-                    input_tensor_values.data(),
-                    input_element_count,
-                    input_shape.data(),
-                    input_shape.size()
-                );
-
-                const char* input_names[]  = {"input"};
-                const char* output_names[] = {"output"};
-
-                // FIX: serialize GPU inference - CUDA session->Run is not thread-safe -- CHANGED BACK
-                auto output_tensors = session->Run(
-                     Ort::RunOptions{nullptr},
-                     input_names, &input_tensor, 1,
-                     output_names, 1
-                    );
-              
-
-                float* mask_data = output_tensors[0].GetTensorMutableData<float>();
-
-                int mask_idx = 0;
-                for (int t = 0; t < Nt; ++t) {
-                    for (int y = 0; y < Ny; ++y) {
-                        for (int x = 0; x < Nx; ++x) {
-                            int idx = IDX3(t, y, x, Nt, Ny, Nx);
-                            float gain = mask_data[mask_idx++];
-                            out[idx][0] *= gain;
-                            out[idx][1] *= gain;
-                        }
-                    }
-                }
-            }
-            // =========================================================
-
-            fftw_execute(p_inv);
 
             for (int t = 0; t < Nt; ++t) {
-                int f_idx = t / 2;
-                bool isOddField = (t % 2 != 0);
-                FrameBuffer* targetFrame = frames[f_idx];
+                int ref_t = (2 - t) % 4;
+                if (ref_t < 0) ref_t += 4;
 
-                for (int dy = 0; dy < Ny; ++dy) {
-                    int absY = y + dy;
-                    
-                    if (absY < videoParameters.firstActiveFrameLine || absY >= videoParameters.lastActiveFrameLine) continue;
-                    if ((absY % 2) != isOddField) continue;
+                for (int yy = 0; yy < Ny; ++yy) {
+                    int ref_y = (16 - yy) % 16;
+                    for (int xx = 0; xx < Nx; ++xx) {
+                        int ref_x = (8 - xx) % 16;
+                        if (ref_x < 0) ref_x += 16;
 
-                    for (int dx = 0; dx < Nx; ++dx) {
-                        int absX = x + dx;
-                        
-                        if (absX < videoParameters.activeVideoStart || absX >= videoParameters.activeVideoEnd) continue;
-
-                        int idx = IDX3(t, dy, dx, Nt, Ny, Nx);
-                        
-                        double val = in[idx][0] / (double)(Nt * Ny * Nx);
-                        double w = winT[t] * winY[dy] * winX[dx];
-                        
-                        targetFrame->accChroma[absY][absX] += val * w;
-                        targetFrame->weightSum[absY][absX] += w * w;
+                        int idx_ref = IDX3(ref_t, ref_y, ref_x, Nt, Ny, Nx);
+                        double mag_ref = sqrt(out[idx_ref][0]*out[idx_ref][0]
+                                           + out[idx_ref][1]*out[idx_ref][1]);
+                        pendingInputTensors[ptr++] = static_cast<float>(mag_ref);
                     }
                 }
+            }
+
+            if (static_cast<int>(pendingBlocks.size()) >= NN_BATCH_BLOCKS) {
+                flushPendingBlocks();
             }
         }
     }
+    flushPendingBlocks();
     fftw_destroy_plan(p_fwd); fftw_destroy_plan(p_inv);
     fftw_free(in); fftw_free(out);
 }
