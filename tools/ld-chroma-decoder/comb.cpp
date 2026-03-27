@@ -519,8 +519,9 @@ void Comb::FrameBuffer::split3D(FrameBuffer &nextFrame, int frameIdx)
                 }
 
                 // --- Create ORT tensor and run inference ---
-                auto memory_info = Ort::MemoryInfo::CreateCpu(
-                    OrtArenaAllocator, OrtMemTypeDefault);
+                auto memory_info = using_cuda
+                    ? Ort::MemoryInfo("Cuda", OrtArenaAllocator, 0, OrtMemTypeDefault)
+                    : Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
 
                 Ort::Value input_tensor = Ort::Value::CreateTensor<float>(
                     memory_info,
